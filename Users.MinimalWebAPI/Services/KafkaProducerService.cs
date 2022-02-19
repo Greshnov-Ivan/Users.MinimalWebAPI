@@ -21,13 +21,29 @@ namespace Users.MinimalWebAPI.Services
         }
         public async Task SendMessageAsync<T>(string topic, T message, CancellationToken cancellationToken)
         {
-            try
+            Task sendMessageToKafka = Task.Run(() => _producer.ProduceAsync(topic, new Message<Null, string> { Value = JsonSerializer.Serialize<T>(message) }, cancellationToken));
+            await WithTimeout(sendMessageToKafka, TimeSpan.FromSeconds(10));
+        }
+        private async Task WithTimeout(Task task, TimeSpan time)
+        {
+            Task delayTask = Task.Delay(time);
+            Task firstToFinish = await Task.WhenAny(task, delayTask);
+
+            if (firstToFinish == delayTask)
             {
-                await _producer.ProduceAsync(topic, new Message<Null, string> { Value = JsonSerializer.Serialize<T>(message) }, cancellationToken);
+                // Первой закончилась задача задержки - разберёмся с исключением
+                task.ContinueWith(HandleException);
+                throw new TimeoutException();
             }
-            catch (Exception ex)
+
+            await task;
+        }
+
+        private void HandleException(Task task)
+        {
+            if (task.Exception is not null)
             {
-                _logger.LogError($"Oops, something went wrong: {ex}");
+                _logger.LogError($"Oops, something went wrong: {task.Exception.Message}");
             }
         }
     }

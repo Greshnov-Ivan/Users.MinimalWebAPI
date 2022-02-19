@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using Users.MinimalWebAPI;
 using Users.MinimalWebAPI.Infrastructure;
 using Users.MinimalWebAPI.Services;
@@ -12,8 +13,10 @@ builder.Services.Configure<KafkaProducerConfig>(builder.Configuration.GetSection
 builder.Services.AddSingleton<IDbClient, DbClient>();
 builder.Services.AddTransient<IUsersService, UsersService>();
 builder.Services.AddTransient<IKafkaProducerService, KafkaProducerService>();
+builder.Services.AddGrpc();
 
 var app = builder.Build();
+app.MapGrpcService<UsersGrpcService>();
 
 if (app.Environment.IsDevelopment())
 {
@@ -35,12 +38,11 @@ app.MapGet("/api/users/{id}", async (IUsersService usersService, string id) =>
     .Produces<User>(StatusCodes.Status200OK)
     .WithName("GetAllUsers")
     .WithTags("Getters");
-app.MapPost("/api/users", async (IUsersService usersService, IKafkaProducerService kafkaProduceService, User user) =>
+app.MapPost("/api/users", async (IUsersService usersService, IKafkaProducerService kafkaProduceService, IOptions<KafkaProducerConfig> options, User user) =>
 {
     var cts = new CancellationTokenSource();
     await usersService.Create(user);
-    Task timer = Task.Run(() => SomeWork(cts));
-    await kafkaProduceService.SendMessageAsync<string>("NewUserCreated", user.Id, cts.Token);
+    await kafkaProduceService.SendMessageAsync<string>(options.Value.Topics.UserCreate, user.Id, cts.Token);
     return Results.Created($"/api/users/", user.Id);
 })
     .Accepts<User>("application/json")
@@ -83,10 +85,3 @@ app.MapDelete("/api/users", async (IUsersService usersService) =>
 app.UseHttpsRedirection();
 
 app.Run();
-
-async Task SomeWork(CancellationTokenSource cts)
-{
-    await Task.Delay(TimeSpan.FromSeconds(60));
-
-    cts.Cancel();
-}
